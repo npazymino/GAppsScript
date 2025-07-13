@@ -49,8 +49,6 @@ function showAdminPrompt() {
  * @param {GoogleAppsScript.Ui.Menu} menu The menu to add items to.
  */
 function addAdminMenuItems(menu) {
-  menu.addItem('Generate Monthly Comparative Report', 'generateMonthlyComparativeReport');
+  menu.addItem('Recalculate all values', 'recalculateValues');
   // Add other admin-only functions here if needed
 }
-
-// ... (Rest of your code for generateMonthlyComparativeReport, processCategory, outputReportToSheet)

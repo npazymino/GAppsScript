@@ -1,3 +1,172 @@
+function recalculateValues() {
+  populateGroupingsTab();
+  generateTabularMatrixReport();
+}
+
+/**
+ * Populates the "Groupings" tab dynamically by extracting Principal, Category, and Type
+ * information from the "Monthly Budget" tab.
+ *
+ * Assumes "Monthly Budget" structure:
+ * - Column A: Contains Type headers (e.g., "Income", "Expenses") or "Total " finishers.
+ * - Column B: Contains Principal headers (e.g., "Person 1") or "Total " finishers.
+ * - Column C: Contains the actual Category names (e.g., "Salary", "Rent", "Groceries").
+ * - Blank cells in A, B, or C are used to delineate sections.
+ * - The script should stop parsing when it encounters "Total Expenses & Debt Repayment & Savings" in Column A.
+ *
+ * "Groupings" tab columns: Principal | Categories | Type
+ */
+function populateGroupingsTab() {
+  const ui = SpreadsheetApp.getUi();
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+
+  const monthlyBudgetSheet = spreadsheet.getSheetByName('Monthly Budget');
+  if (!monthlyBudgetSheet) {
+    ui.alert('Error', 'The "Monthly Budget" sheet was not found. Please ensure it exists and is named "Monthly Budget".', ui.ButtonSet.OK);
+    return;
+  }
+
+  let groupingsSheet = spreadsheet.getSheetByName('Groupings');
+  if (!groupingsSheet) {
+    groupingsSheet = spreadsheet.insertSheet('Groupings');
+    Logger.log('Created new "Groupings" sheet.');
+  }
+
+  groupingsSheet.clearContents();
+  groupingsSheet.clearFormats();
+
+  const START_ROW = 7; // Define the new starting row for data extraction
+  const FINAL_TYPE_FINISHER = "total expenses & debt repayment & savings"; // The specific line to stop parsing at
+
+  const lastRow = monthlyBudgetSheet.getLastRow();
+  if (lastRow < START_ROW) {
+    ui.alert('No Data', `The "Monthly Budget" sheet has no data starting from row ${START_ROW}. No groupings to extract.`, ui.ButtonSet.OK);
+    groupingsSheet.getRange(1, 1, 1, 3).setValues([['Principal', 'Categories', 'Type']]);
+    return;
+  }
+
+  const numRowsToGet = lastRow - START_ROW + 1;
+  const budgetData = monthlyBudgetSheet.getRange(START_ROW, 1, numRowsToGet, 3).getValues(); // Reads A, B, C
+
+  Logger.log('--- Starting Groupings Extraction Debug ---');
+  Logger.log(`Total rows to process (from sheet row ${START_ROW}): ${budgetData.length}`);
+
+  let currentType = null;
+  let currentPrincipal = null;
+  let lastSeenType = null; // Track the last valid type seen
+  let lastSeenPrincipal = null; // Track the last valid principal seen
+
+  const uniqueGroupings = new Set();
+  const seenTypes = new Set(); // Keep track of all types we've seen
+  const seenPrincipals = new Set(); // Keep track of all principals we've seen
+
+  for (let i = 0; i < budgetData.length; i++) {
+    const sheetRowNum = i + START_ROW; // Actual row number in the sheet for logging
+    const row = budgetData[i];
+    const cellA = String(row[0]).trim().toLowerCase(); // Column A (Type or section finisher) - normalized
+    const cellB = String(row[1]).trim().toLowerCase(); // Column B (Principal or section finisher) - normalized
+    const cellC = String(row[2]).trim(); // Column C (Category) - preserve original case
+    
+    // Keep original case versions for logging and storage
+    const originalCellA = String(row[0]).trim();
+    const originalCellB = String(row[1]).trim();
+    const originalCellC = String(row[2]).trim();
+
+    Logger.log(`Processing Sheet Row ${sheetRowNum}: A='${originalCellA}', B='${originalCellB}', C='${originalCellC}'`);
+    Logger.log(`  Current State: Type='${currentType}', Principal='${currentPrincipal}'`);
+
+    // --- Rule 0: Hard Stop at Final Type Finisher ---
+    if (cellA === FINAL_TYPE_FINISHER) {
+      Logger.log(`  -> Detected final Type finisher: '${originalCellA}'. Stopping parsing.`);
+      break;
+    }
+
+    // Rule 1: Detect General Section Finishers (e.g., "Total Income", "Total Person 1")
+    if (cellA.startsWith("total ") || cellB.startsWith("total ")) {
+      Logger.log(`  -> Detected general 'Total' line. Resetting current state but preserving last seen values.`);
+      currentType = null;
+      currentPrincipal = null;
+      continue;
+    }
+
+    // Rule 2: Detect Type Header (Column A has value, Column B & C are empty)
+    if (originalCellA && !originalCellB && !originalCellC) {
+      Logger.log(`  -> Detected new Type: '${originalCellA}'`);
+      currentType = originalCellA;
+      lastSeenType = originalCellA;
+      seenTypes.add(originalCellA);
+      currentPrincipal = null; // Reset principal when a new type starts
+      continue;
+    }
+
+    // Rule 3: Detect Principal Header (Column B has value, Column A & C are empty)
+    if (originalCellB && !originalCellA && !originalCellC) {
+      Logger.log(`  -> Detected new Principal: '${originalCellB}'`);
+      currentPrincipal = originalCellB;
+      lastSeenPrincipal = originalCellB;
+      seenPrincipals.add(originalCellB);
+      continue; // Move to next row after setting principal
+    }
+
+    // Rule 4: Detect Category (Column C has value)
+    if (originalCellC) {
+      // Use current values if available, otherwise fall back to last seen values
+      const effectiveType = currentType || lastSeenType;
+      const effectivePrincipal = currentPrincipal || lastSeenPrincipal;
+      
+      Logger.log(`  -> Potential category detected: '${originalCellC}'`);
+      Logger.log(`  -> Effective Type: '${effectiveType}', Effective Principal: '${effectivePrincipal}'`);
+      
+      // Enhanced validation: category should not be a known type or principal
+      const isKnownType = seenTypes.has(originalCellC) || originalCellC.toLowerCase().includes('income') || originalCellC.toLowerCase().includes('expense');
+      const isKnownPrincipal = seenPrincipals.has(originalCellC) || originalCellC.toLowerCase().includes('person') || originalCellC.toLowerCase().includes('shelter');
+      
+      if (effectiveType && effectivePrincipal && !isKnownType && !isKnownPrincipal) {
+        const groupingKey = `${effectivePrincipal}|${originalCellC}|${effectiveType}`;
+        if (!uniqueGroupings.has(groupingKey)) {
+          uniqueGroupings.add(groupingKey);
+          Logger.log(`  -> Added grouping: ${groupingKey}`);
+        } else {
+          Logger.log(`  -> Duplicate grouping skipped: ${groupingKey}`);
+        }
+      } else {
+        Logger.log(`  -> Category '${originalCellC}' skipped. Reasons: effectiveType=${!!effectiveType}, effectivePrincipal=${!!effectivePrincipal}, isKnownType=${isKnownType}, isKnownPrincipal=${isKnownPrincipal}`);
+      }
+    }
+
+    // Rule 5: Handle completely blank rows (reset current state but preserve last seen)
+    if (!originalCellA && !originalCellB && !originalCellC) {
+      Logger.log(`  -> Blank row detected. Resetting current state.`);
+      currentType = null;
+      currentPrincipal = null;
+      // Don't reset lastSeen values - they persist across blank rows
+    }
+  }
+
+  Logger.log('--- Finished Groupings Extraction Debug ---');
+  Logger.log(`Final unique groupings count: ${uniqueGroupings.size}`);
+  Logger.log(`Seen types: ${Array.from(seenTypes).join(', ')}`);
+  Logger.log(`Seen principals: ${Array.from(seenPrincipals).join(', ')}`);
+
+  const groupingsData = [['Principal', 'Categories', 'Type']]; // Header row
+
+  uniqueGroupings.forEach(entry => {
+    const [principal, category, type] = entry.split('|');
+    groupingsData.push([principal, category, type]);
+  });
+
+  if (groupingsData.length > 1) { // If there's more than just the header
+    groupingsSheet.getRange(1, 1, groupingsData.length, groupingsData[0].length).setValues(groupingsData);
+    groupingsSheet.autoResizeColumns(1, groupingsData[0].length);
+    ui.alert('Success', `Groupings tab populated with ${groupingsData.length - 1} unique entries.`, ui.ButtonSet.OK);
+  } else {
+    // Only header or no data found
+    groupingsSheet.getRange(1, 1, 1, 3).setValues([['Principal', 'Categories', 'Type']]);
+    ui.alert('Info', 'No unique groupings found to populate the "Groupings" tab.', ui.ButtonSet.OK);
+  }
+
+  spreadsheet.setActiveSheet(groupingsSheet);
+}
 /**
  * Generates a flat, tabular matrix report with data grouped by Type, Principal, Category, Year, and Month.
  * Report is ordered descending by Year then Month.
