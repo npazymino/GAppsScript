@@ -1,8 +1,6 @@
-Candidate: Nelson Paz y Miño
-Date: 13-JUL-2025
-Code repository: https://github.com/npazymino/GAppsScript
 
-Hello PROSPR team, thanks for this opportunity. I’ll proceed to explain what I have done to accomplish the tasks given to me.
+
+I’ll proceed to explain what I have done to automate this worksheet.
 Your spreadsheet now has several built-in helpers that work together to manage the financial data and reports. Here's how they fit into the automation workflow:
 
 1. 3. The "Admin Access" Helper
